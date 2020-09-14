@@ -94,7 +94,7 @@ void bsdrss(int pid)
 
 #elif defined __DragonFly__
   struct kinfo_proc kip;
-  int mib[6] = { CTL_KERN, KERN_PROC2, KERN_PROC_PID, 0 };
+  int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, 0 };
   const char *state_abbrev[] = {
     "", "RUN", "STOP", "SLEEP",
   };
@@ -138,7 +138,7 @@ void bsdrss(int pid)
 
 #else
   struct kinfo_proc kip;
-  int mib[6] = { CTL_KERN, KERN_PROC2, KERN_PROC_PID, 0 };
+  int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, 0 };
   const char *state_abbrev[] = {
     "", "START", "RUN", "SLEEP", "STOP", "ZOMB", "WAIT", "LOCK"
   };
