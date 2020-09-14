@@ -5,7 +5,6 @@
 #include <time.h>
 
 #include <fcntl.h>
-#include <kvm.h>
 #include <sys/param.h>
 #include <sys/sysctl.h>
 
@@ -37,7 +36,7 @@ void bsdrss(int pid)
 
   mib[3] = pid;
   size = sizeof(kip);
-  cnt = sysctl(mib, 6, &kip, &size, NULL, 0);
+  cnt = sysctl(mib, sizeof(mib)/sizeof(mib[0]), &kip, &size, NULL, 0);
   if (cnt == -1 || size/sizeof(kip) != 1)
     errx(1, "no kip");
 
@@ -57,81 +56,74 @@ void bsdrss(int pid)
     snprintf(state_buf, sizeof(state_buf), "%s", state_abbrev[kip.p_stat]);
 
 #elif defined __NetBSD__
-  struct kinfo_proc2 *kip;
-  kvm_t *kvm;
+  struct kinfo_proc2 kip;
+  int mib[6] = { CTL_KERN, KERN_PROC2, KERN_PROC_PID, 0, sizeof(kip), 1 };
   const char *state_abbrev[] = {
     "", "IDLE", "RUN", "SLEEP", "STOP", "ZOMB", "DEAD", "CPU"
   };
   int ncpu, mib_ncpu[2] = { CTL_HW, HW_NCPU };
   size_t size;
 
-  kvm = kvm_open(NULL, "/dev/null", NULL, O_RDONLY | KVM_NO_FILES, "bsdrss");
-  if (!kvm)
-    errx(1, "no kvm");
-
-  kip = kvm_getproc2(kvm, KERN_PROC_PID, pid, sizeof(*kip), &cnt);
-  if (!kip || cnt != 1)
+  mib[3] = pid;
+  size = sizeof(kip);
+  cnt = sysctl(mib, sizeof(mib)/sizeof(mib[0]), &kip, &size, NULL, 0);
+  if (cnt == -1 || size/sizeof(kip) != 1)
     errx(1, "no kip");
 
-  rss = kip->p_vm_rssize;
-  startsec = kip->p_ustart_sec;
+  rss = kip.p_vm_rssize;
+  startsec = kip.p_ustart_sec;
 
   size = sizeof(ncpu);
   if (sysctl(mib_ncpu, 2, &ncpu, &size, NULL, 0) == -1)
     errx(1, "no ncpu");
 
-  if (kip->p_cpuid != KI_NOCPU && ncpu > 1) {
-    if (kip->p_stat == LSSLEEP) {
+  if (kip.p_cpuid != KI_NOCPU && ncpu > 1) {
+    if (kip.p_stat == LSSLEEP) {
         snprintf(state_buf, sizeof(state_buf), "%.6s/%lu", 
-                 kip->p_wmesg, kip->p_cpuid);
+                 kip.p_wmesg, kip.p_cpuid);
     } else {
         snprintf(state_buf, sizeof(state_buf), "%.6s/%lu",
-                 state_abbrev[(unsigned)kip->p_stat], kip->p_cpuid);
+                 state_abbrev[(unsigned)kip.p_stat], kip.p_cpuid);
     }
-  } else if (kip->p_stat == LSSLEEP) {
-    snprintf(state_buf, sizeof(state_buf), "%s", kip->p_wmesg);
+  } else if (kip.p_stat == LSSLEEP) {
+    snprintf(state_buf, sizeof(state_buf), "%s", kip.p_wmesg);
   } else {
     snprintf(state_buf, sizeof(state_buf), "%s",
-             state_abbrev[(unsigned)kip->p_stat]);
+             state_abbrev[(unsigned)kip.p_stat]);
   }
 
-  if (kvm_close(kvm))
-    errx(1, "cant close kvm");
-
 #elif defined __DragonFly__
-  struct kinfo_proc *kip;
-  kvm_t *kvm;
+  struct kinfo_proc kip;
+  int mib[6] = { CTL_KERN, KERN_PROC2, KERN_PROC_PID, 0 };
   const char *state_abbrev[] = {
     "", "RUN", "STOP", "SLEEP",
   };
-  size_t state;
+  size_t state, size;
 
-  kvm = kvm_open(NULL, "/dev/null", NULL, O_RDONLY, "bsdrss");
-  if (!kvm)
-    errx(1, "no kvm");
-
-  kip = kvm_getprocs(kvm, KERN_PROC_PID, pid, &cnt);
-  if (!kip || cnt != 1)
+  mib[3] = pid;
+  size = sizeof(kip);
+  cnt = sysctl(mib, sizeof(mib)/sizeof(mib[0]), &kip, &size, NULL, 0);
+  if (cnt == -1 || size/sizeof(kip) != 1)
     errx(1, "no kip");
 
-  rss = kip->kp_vm_rssize;
-  startsec = kip->kp_start.tv_sec;
+  rss = kip.kp_vm_rssize;
+  startsec = kip.kp_start.tv_sec;
 
-  if (kip->kp_stat == SZOMB) {
+  if (kip.kp_stat == SZOMB) {
     snprintf(state_buf, sizeof(state_buf), "%s", "ZOMB");
   } else {
-    switch (state = kip->kp_lwp.kl_stat) {
+    switch (state = kip.kp_lwp.kl_stat) {
       case LSRUN:
-        if (kip->kp_lwp.kl_tdflags & TDF_RUNNING)
+        if (kip.kp_lwp.kl_tdflags & TDF_RUNNING)
           snprintf(state_buf, sizeof(state_buf),
-                   "CPU%d", kip->kp_lwp.kl_cpuid);
+                   "CPU%d", kip.kp_lwp.kl_cpuid);
         else
           snprintf(state_buf, sizeof(state_buf), "%s", "RUN");
         break;
       case LSSLEEP:
-        if (kip->kp_lwp.kl_wmesg != NULL) {
+        if (kip.kp_lwp.kl_wmesg != NULL) {
           snprintf(state_buf, sizeof(state_buf),
-                   "%.8s", kip->kp_lwp.kl_wmesg);
+                   "%.8s", kip.kp_lwp.kl_wmesg);
           break;
         }
       /* fall through */
@@ -144,49 +136,43 @@ void bsdrss(int pid)
     }
   }
 
-  if (kvm_close(kvm))
-    errx(1, "cant close kvm");
-
 #else
-  struct kinfo_proc *kip;
-  kvm_t *kvm;
+  struct kinfo_proc kip;
+  int mib[6] = { CTL_KERN, KERN_PROC2, KERN_PROC_PID, 0 };
   const char *state_abbrev[] = {
     "", "START", "RUN", "SLEEP", "STOP", "ZOMB", "WAIT", "LOCK"
   };
-  size_t state;
   int ncpu, mib_ncpu[2] = { CTL_HW, HW_NCPU };
-  size_t size;
+  size_t state, size;
 
-  kvm = kvm_open(NULL, "/dev/null", NULL, O_RDONLY, "bsdrss");
-  if (!kvm)
-    errx(1, "no kvm");
-
-  kip = kvm_getprocs(kvm, KERN_PROC_PID, pid, &cnt);
-  if (!kip || cnt != 1)
+  mib[3] = pid;
+  size = sizeof(kip);
+  cnt = sysctl(mib, sizeof(mib)/sizeof(mib[0]), &kip, &size, NULL, 0);
+  if (cnt == -1 || size/sizeof(kip) != 1)
     errx(1, "no kip");
 
-  rss = kip->ki_rssize;
-  startsec = kip->ki_start.tv_sec;
+  rss = kip.ki_rssize;
+  startsec = kip.ki_start.tv_sec;
 
   size = sizeof(ncpu);
   if (sysctl(mib_ncpu, 2, &ncpu, &size, NULL, 0) == -1)
     errx(1, "no ncpu");
 
-  switch (state = kip->ki_stat) {
+  switch (state = kip.ki_stat) {
     case SRUN:
-      if (ncpu > 1 && kip->ki_oncpu != NOCPU)
-        snprintf(state_buf, sizeof(state_buf), "CPU%d", kip->ki_oncpu);
+      if (ncpu > 1 && kip.ki_oncpu != NOCPU)
+        snprintf(state_buf, sizeof(state_buf), "CPU%d", kip.ki_oncpu);
       else
         snprintf(state_buf, sizeof(state_buf), "%s", "RUN");
       break;
     case SLOCK:
-      if (kip->ki_kiflag & KI_LOCKBLOCK) {
-        snprintf(state_buf, sizeof(state_buf), "*%s", kip->ki_lockname);
+      if (kip.ki_kiflag & KI_LOCKBLOCK) {
+        snprintf(state_buf, sizeof(state_buf), "*%s", kip.ki_lockname);
         break;
       }
       /* fall through */
     case SSLEEP:
-      snprintf(state_buf, sizeof(state_buf), "%.6s", kip->ki_wmesg);
+      snprintf(state_buf, sizeof(state_buf), "%.6s", kip.ki_wmesg);
       break;
     default:
       if (state < sizeof(state_abbrev)/sizeof(state_abbrev[0])) {
@@ -196,9 +182,6 @@ void bsdrss(int pid)
       }
       break;
   }
-
-  if (kvm_close(kvm))
-    errx(1, "cant close kvm");
 
 #endif
 
